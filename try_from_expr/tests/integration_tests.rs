@@ -1,6 +1,6 @@
-use try_from_expr::TryFromExpr;
 use std::collections::HashMap;
 use syn::{Expr, parse_quote};
+use try_from_expr::TryFromExpr;
 
 #[test]
 fn test_unit_variants() {
@@ -63,12 +63,20 @@ fn test_tuple_variants_primitives() {
 fn test_struct_variants() {
     #[derive(Debug, PartialEq, TryFromExpr)]
     enum Config {
-        Server { host: String, port: u16, debug: bool },
+        Server {
+            host: String,
+            port: u16,
+            debug: bool,
+        },
     }
 
-    let expr: Expr = parse_quote!(Config::Server { host: "localhost", port: 8080, debug: true });
+    let expr: Expr = parse_quote!(Config::Server {
+        host: "localhost",
+        port: 8080,
+        debug: true
+    });
     let config = Config::try_from(&expr).unwrap();
-    
+
     match config {
         Config::Server { host, port, debug } => {
             assert_eq!(host, "localhost");
@@ -109,7 +117,7 @@ fn test_collections() {
         Collections::Map(m) => {
             assert_eq!(m.get("a"), Some(&1));
             assert_eq!(m.get("b"), Some(&2));
-        },
+        }
         _ => panic!("Wrong variant"),
     }
 }
@@ -157,10 +165,14 @@ fn test_options() {
 #[test]
 fn test_wrapper_enums() {
     #[derive(Debug, PartialEq, TryFromExpr)]
-    enum InnerA { Variant(i32) }
-    
+    enum InnerA {
+        Variant(i32),
+    }
+
     #[derive(Debug, PartialEq, TryFromExpr)]
-    enum InnerB { Variant(String) }
+    enum InnerB {
+        Variant(String),
+    }
 
     #[derive(Debug, PartialEq, TryFromExpr)]
     enum Wrapper {
@@ -188,7 +200,9 @@ fn test_wrapper_enums() {
 #[test]
 fn test_error_handling() {
     #[derive(Debug, PartialEq, TryFromExpr)]
-    enum Simple { A(i32) }
+    enum Simple {
+        A(i32),
+    }
 
     // Wrong type
     let expr: Expr = parse_quote!(Simple::A("not an int"));
@@ -209,18 +223,21 @@ fn test_error_handling() {
 #[test]
 fn test_complex_nested() {
     #[derive(Debug, PartialEq)]
-    struct CustomPoint { x: i32, y: i32 }
+    struct CustomPoint {
+        x: i32,
+        y: i32,
+    }
 
     // Custom impl for CustomPoint to use in enum
     impl TryFrom<&Expr> for CustomPoint {
         type Error = syn::Error;
         fn try_from(expr: &Expr) -> Result<Self, Self::Error> {
-             if let Expr::Struct(_s) = expr {
-                 // Simplified parsing for test
-                 Ok(CustomPoint { x: 10, y: 20 })
-             } else {
-                 Err(syn::Error::new_spanned(expr, "Expected struct"))
-             }
+            if let Expr::Struct(_s) = expr {
+                // Simplified parsing for test
+                Ok(CustomPoint { x: 10, y: 20 })
+            } else {
+                Err(syn::Error::new_spanned(expr, "Expected struct"))
+            }
         }
     }
 
@@ -230,7 +247,10 @@ fn test_complex_nested() {
         Polygon(Vec<CustomPoint>),
     }
 
-    let expr: Expr = parse_quote!(Shape::Circle { center: CustomPoint { x: 10, y: 20 }, radius: 5.0 });
+    let expr: Expr = parse_quote!(Shape::Circle {
+        center: CustomPoint { x: 10, y: 20 },
+        radius: 5.0
+    });
     let shape = Shape::try_from(&expr).unwrap();
     match shape {
         Shape::Circle { center, radius } => {

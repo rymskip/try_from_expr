@@ -59,8 +59,12 @@ pub fn derive_try_from_expr(input: TokenStream) -> TokenStream {
             continue;
         }
 
-        let Ok(list) = attr.meta.require_list() else { continue };
-        let Ok(nested) = list.parse_args::<syn::Ident>() else { continue };
+        let Ok(list) = attr.meta.require_list() else {
+            continue;
+        };
+        let Ok(nested) = list.parse_args::<syn::Ident>() else {
+            continue;
+        };
 
         match nested.to_string().as_str() {
             "wrapper" => forced_mode = Some(true),
@@ -93,7 +97,9 @@ fn generate_wrapper_enum_impl(
         .variants
         .iter()
         .filter_map(|variant| {
-            let Fields::Unnamed(fields) = &variant.fields else { return None };
+            let Fields::Unnamed(fields) = &variant.fields else {
+                return None;
+            };
             let field = fields.unnamed.first()?;
             Some((&variant.ident, &field.ty))
         })
