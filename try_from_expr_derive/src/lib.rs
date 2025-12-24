@@ -243,8 +243,7 @@ fn generate_wrapper_enum_impl(
                             let path = &path_expr.path;
                             if let Some(variant_seg) = path.segments.last() {
                                 let is_correct_enum = if let Some(enum_seg) = path.segments.iter().rev().nth(1) {
-                                    let name = enum_seg.ident.to_string();
-                                    name == #enum_name_str || name == "Self"
+                                    enum_seg.ident == #enum_name_str || enum_seg.ident == "Self"
                                 } else {
                                     false
                                 };
@@ -267,14 +266,12 @@ fn generate_wrapper_enum_impl(
                     }
                     ::syn::Expr::Struct(struct_expr) => {
                         let path = &struct_expr.path;
-                        if let Some(variant_seg) = path.segments.last() {
-                            let is_correct_enum = if let Some(enum_seg) = path.segments.iter().rev().nth(1) {
-                                let name = enum_seg.ident.to_string();
-                                name == #enum_name_str || name == "Self"
-                            } else {
-                                false
-                            };
-
+                                                    if let Some(variant_seg) = path.segments.last() {
+                                                        let is_correct_enum = if let Some(enum_seg) = path.segments.iter().rev().nth(1) {
+                                                            enum_seg.ident == #enum_name_str || enum_seg.ident == "Self"
+                                                        } else {
+                                                            false
+                                                        };
                             if is_correct_enum {
                                 let variant_str = variant_seg.ident.to_string();
                                 match variant_str.as_str() {
@@ -486,8 +483,7 @@ fn generate_leaf_enum_impl(
                             let variant_name = &variant_seg.ident;
                             if path.segments.len() > 1 {
                                 let is_correct_enum = if let Some(enum_seg) = path.segments.iter().rev().nth(1) {
-                                    let name = enum_seg.ident.to_string();
-                                    name == #enum_name_str || name == "Self"
+                                    enum_seg.ident == #enum_name_str || enum_seg.ident == "Self"
                                 } else {
                                     false
                                 };
@@ -529,8 +525,7 @@ fn generate_leaf_enum_impl(
                             let path = &path_expr.path;
                             if let Some(variant_seg) = path.segments.last() {
                                 let is_correct_enum = if let Some(enum_seg) = path.segments.iter().rev().nth(1) {
-                                    let name = enum_seg.ident.to_string();
-                                    name == #enum_name_str || name == "Self"
+                                    enum_seg.ident == #enum_name_str || enum_seg.ident == "Self"
                                 } else {
                                     false
                                 };
@@ -564,14 +559,12 @@ fn generate_leaf_enum_impl(
                     // Handle struct variants like StringEnum::Config { min: 5, max: 10 }
                     ::syn::Expr::Struct(struct_expr) => {
                         let path = &struct_expr.path;
-                        if let Some(variant_seg) = path.segments.last() {
-                            let is_correct_enum = if let Some(enum_seg) = path.segments.iter().rev().nth(1) {
-                                let name = enum_seg.ident.to_string();
-                                name == #enum_name_str || name == "Self"
-                            } else {
-                                false
-                            };
-
+                                                    if let Some(variant_seg) = path.segments.last() {
+                                                        let is_correct_enum = if let Some(enum_seg) = path.segments.iter().rev().nth(1) {
+                                                            enum_seg.ident == #enum_name_str || enum_seg.ident == "Self"
+                                                        } else {
+                                                            false
+                                                        };
                             if is_correct_enum {
                                 let variant_str = variant_seg.ident.to_string();
                                 match variant_str.as_str() {

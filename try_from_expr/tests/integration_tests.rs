@@ -1,5 +1,5 @@
 use try_from_expr::TryFromExpr;
-use std::collections::{HashMap, BTreeMap};
+use std::collections::HashMap;
 use syn::{Expr, parse_quote};
 
 #[test]
@@ -52,7 +52,7 @@ fn test_tuple_variants_primitives() {
     let expr: Expr = parse_quote!(Primitives::BoolChar(true, 'x'));
     let val = Primitives::try_from(&expr).unwrap();
     if let Primitives::BoolChar(a, b) = val {
-        assert_eq!(a, true);
+        assert!(a);
         assert_eq!(b, 'x');
     } else {
         panic!("Wrong variant");
@@ -215,7 +215,7 @@ fn test_complex_nested() {
     impl TryFrom<&Expr> for CustomPoint {
         type Error = syn::Error;
         fn try_from(expr: &Expr) -> Result<Self, Self::Error> {
-             if let Expr::Struct(s) = expr {
+             if let Expr::Struct(_s) = expr {
                  // Simplified parsing for test
                  Ok(CustomPoint { x: 10, y: 20 })
              } else {

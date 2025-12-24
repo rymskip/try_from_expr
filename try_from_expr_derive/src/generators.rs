@@ -93,7 +93,7 @@ pub fn generate_type_parser(
                         // Handle vec![...] macro
                         if let ::syn::Expr::Macro(mac) = expr {
                             let is_vec = mac.mac.path.segments.last()
-                                .map(|s| s.ident.to_string() == "vec")
+                                .map(|s| s.ident == "vec")
                                 .unwrap_or(false);
 
                             if is_vec {
