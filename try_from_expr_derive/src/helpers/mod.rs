@@ -4,16 +4,16 @@ use syn::{Fields, GenericArgument, PathArguments, Type};
 
 // Extract the inner type from Option<T>
 pub fn extract_option_inner_type(type_path: &syn::TypePath) -> Option<&Type> {
-    type_path.path.segments.last().and_then(|seg| {
-        if seg.ident == "Option" {
-            if let PathArguments::AngleBracketed(args) = &seg.arguments {
-                if let Some(GenericArgument::Type(inner_ty)) = args.args.first() {
-                    return Some(inner_ty);
-                }
-            }
-        }
-        None
-    })
+    let seg = type_path.path.segments.last()?;
+    
+    if seg.ident != "Option" {
+        return None;
+    }
+
+    let PathArguments::AngleBracketed(args) = &seg.arguments else { return None };
+    let GenericArgument::Type(inner_ty) = args.args.first()? else { return None };
+    
+    Some(inner_ty)
 }
 
 pub fn is_option_type(type_path: &syn::TypePath) -> bool {

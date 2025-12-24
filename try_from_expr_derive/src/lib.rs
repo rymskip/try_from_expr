@@ -55,26 +55,27 @@ pub fn derive_try_from_expr(input: TokenStream) -> TokenStream {
     // Check for explicit mode attribute
     let mut forced_mode = None;
     for attr in &input.attrs {
-        if attr.path().is_ident("try_from_expr") {
-            if let Ok(list) = attr.meta.require_list() {
-                if let Ok(nested) = list.parse_args::<syn::Ident>() {
-                    match nested.to_string().as_str() {
-                        "wrapper" => forced_mode = Some(true),
-                        "leaf" => forced_mode = Some(false),
-                        _ => {}
-                    }
-                }
-            }
+        if !attr.path().is_ident("try_from_expr") {
+            continue;
+        }
+
+        let Ok(list) = attr.meta.require_list() else { continue };
+        let Ok(nested) = list.parse_args::<syn::Ident>() else { continue };
+
+        match nested.to_string().as_str() {
+            "wrapper" => forced_mode = Some(true),
+            "leaf" => forced_mode = Some(false),
+            _ => {}
         }
     }
 
     // Detect if this is a wrapper enum or a leaf enum (or use forced mode)
-    let is_wrapper_enum = forced_mode.unwrap_or_else(|| detect_wrapper_enum(&data));
+    let is_wrapper_enum = forced_mode.unwrap_or_else(|| detect_wrapper_enum(data));
 
     if is_wrapper_enum {
-        generate_wrapper_enum_impl(&input, &enum_name, &data)
+        generate_wrapper_enum_impl(&input, enum_name, data)
     } else {
-        generate_leaf_enum_impl(&input, &enum_name, &data)
+        generate_leaf_enum_impl(&input, enum_name, data)
     }
 }
 
@@ -85,17 +86,16 @@ fn generate_wrapper_enum_impl(
     data: &syn::DataEnum,
 ) -> TokenStream {
     let helpers = generate_helper_functions();
+    let enum_name_str = enum_name.to_string();
+
     // Extract child types from wrapper enum variants
     let child_types: Vec<_> = data
         .variants
         .iter()
         .filter_map(|variant| {
-            if let Fields::Unnamed(fields) = &variant.fields {
-                if let Some(field) = fields.unnamed.first() {
-                    return Some((&variant.ident, &field.ty));
-                }
-            }
-            None
+            let Fields::Unnamed(fields) = &variant.fields else { return None };
+            let field = fields.unnamed.first()?;
+            Some((&variant.ident, &field.ty))
         })
         .collect();
 
@@ -161,6 +161,71 @@ fn generate_wrapper_enum_impl(
         })
         .collect();
 
+    // Collect parametrized variant information (tuple variants)
+    let param_variant_names: Vec<String> = data
+        .variants
+        .iter()
+        .filter_map(|v| match &v.fields {
+            Fields::Unnamed(_) => Some(v.ident.to_string()),
+            _ => None,
+        })
+        .collect();
+    let param_variants_str = if param_variant_names.is_empty() {
+        "(no parametrized variants)".to_string()
+    } else {
+        param_variant_names.join(", ")
+    };
+
+    // Generate match arms for call expressions (tuple variants with parameters)
+    let call_variant_arms: Vec<_> = data
+        .variants
+        .iter()
+        .filter_map(|variant| {
+            let variant_name = &variant.ident;
+            let variant_str = variant_name.to_string();
+
+            match &variant.fields {
+                Fields::Unnamed(fields) => {
+                    let arg_processing = generate_arg_processing(variant_name, &fields.unnamed);
+                    let variant_lit =
+                        syn::LitStr::new(&variant_str, proc_macro2::Span::call_site());
+
+                    Some(quote! {
+                        #variant_lit => {
+                            return #arg_processing
+                        },
+                    })
+                }
+                _ => None,
+            }
+        })
+        .collect();
+
+    // Generate match arms for struct expressions (struct variants)
+    let struct_variant_arms: Vec<_> = data
+        .variants
+        .iter()
+        .filter_map(|variant| {
+            let variant_name = &variant.ident;
+            let variant_str = variant_name.to_string();
+
+            match &variant.fields {
+                Fields::Named(fields) => {
+                    let field_parsers = generate_struct_field_parsing(variant_name, fields);
+                    let variant_lit =
+                        syn::LitStr::new(&variant_str, proc_macro2::Span::call_site());
+
+                    Some(quote! {
+                        #variant_lit => {
+                            return #field_parsers
+                        },
+                    })
+                }
+                _ => None,
+            }
+        })
+        .collect();
+
     let expanded = quote! {
         impl TryFrom<&::syn::Expr> for #enum_name {
             type Error = ::syn::Error;
@@ -171,7 +236,63 @@ fn generate_wrapper_enum_impl(
                 // Unwrap parentheses and groups
                 let expr = Self::unwrap_expr(expr);
 
-                // Check for unit variants first (e.g., Default, None, etc.)
+                // Check for explicit variants first (Call/Struct)
+                match expr {
+                    ::syn::Expr::Call(call_expr) => {
+                        if let ::syn::Expr::Path(path_expr) = &*call_expr.func {
+                            let path = &path_expr.path;
+                            if let Some(variant_seg) = path.segments.last() {
+                                let is_correct_enum = if let Some(enum_seg) = path.segments.iter().rev().nth(1) {
+                                    let name = enum_seg.ident.to_string();
+                                    name == #enum_name_str || name == "Self"
+                                } else {
+                                    false
+                                };
+
+                                if is_correct_enum {
+                                    let variant_str = variant_seg.ident.to_string();
+                                    match variant_str.as_str() {
+                                        #(#call_variant_arms)*
+                                        _ => {
+                                             // If enum matches but variant unknown, it IS an error (not fallback)
+                                             return Err(::syn::Error::new(
+                                                variant_seg.span(),
+                                                format!("Unknown parametrized variant '{}'. Valid options: {}", variant_str, #param_variants_str)
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    ::syn::Expr::Struct(struct_expr) => {
+                        let path = &struct_expr.path;
+                        if let Some(variant_seg) = path.segments.last() {
+                            let is_correct_enum = if let Some(enum_seg) = path.segments.iter().rev().nth(1) {
+                                let name = enum_seg.ident.to_string();
+                                name == #enum_name_str || name == "Self"
+                            } else {
+                                false
+                            };
+
+                            if is_correct_enum {
+                                let variant_str = variant_seg.ident.to_string();
+                                match variant_str.as_str() {
+                                    #(#struct_variant_arms)*
+                                    _ => {
+                                         return Err(::syn::Error::new(
+                                            variant_seg.span(),
+                                            format!("Unknown struct variant '{}' for enum '{}'", variant_str, #enum_name_str)
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+
+                // Check for unit variants (e.g., Default, None, etc.)
                 if let ::syn::Expr::Path(path_expr) = expr {
                     let path = &path_expr.path;
                     if let Some(last) = path.segments.last() {

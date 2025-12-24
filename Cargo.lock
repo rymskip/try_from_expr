@@ -101,6 +101,7 @@ name = "try_from_expr"
 version = "0.1.0"
 dependencies = [
  "ordered-float",
+ "quote",
  "syn",
  "try_from_expr_derive",
 ]

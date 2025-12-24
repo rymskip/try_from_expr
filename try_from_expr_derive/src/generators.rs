@@ -4,47 +4,48 @@ use syn::Type;
 
 // Helper to extract inner type from Vec<T>
 fn extract_vec_inner_type(ty: &Type) -> Option<&Type> {
-    if let Type::Path(type_path) = ty {
-        if let Some(seg) = type_path.path.segments.last() {
-            if seg.ident == "Vec" {
-                if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
-                    if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
-                        return Some(inner);
-                    }
-                }
-            }
-        }
+    let Type::Path(type_path) = ty else { return None };
+    let seg = type_path.path.segments.last()?;
+
+    if seg.ident != "Vec" {
+        return None;
     }
-    None
+
+    let syn::PathArguments::AngleBracketed(args) = &seg.arguments else { return None };
+    let syn::GenericArgument::Type(inner) = args.args.first()? else { return None };
+
+    Some(inner)
 }
 
 // Helper to extract key and value types from HashMap<K, V> or BTreeMap<K, V>
 fn extract_map_types(ty: &Type) -> Option<(&Type, &Type)> {
-    if let Type::Path(type_path) = ty {
-        if let Some(seg) = type_path.path.segments.last() {
-            let ident_str = seg.ident.to_string();
-            if ident_str == "HashMap" || ident_str == "BTreeMap" {
-                if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
-                    let types: Vec<&Type> = args
-                        .args
-                        .iter()
-                        .filter_map(|arg| {
-                            if let syn::GenericArgument::Type(ty) = arg {
-                                Some(ty)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
+    let Type::Path(type_path) = ty else { return None };
+    let seg = type_path.path.segments.last()?;
 
-                    if types.len() == 2 {
-                        return Some((types[0], types[1]));
-                    }
-                }
-            }
-        }
+    let ident_str = seg.ident.to_string();
+    if ident_str != "HashMap" && ident_str != "BTreeMap" {
+        return None;
     }
-    None
+
+    let syn::PathArguments::AngleBracketed(args) = &seg.arguments else { return None };
+
+    let types: Vec<&Type> = args
+        .args
+        .iter()
+        .filter_map(|arg| {
+            if let syn::GenericArgument::Type(ty) = arg {
+                Some(ty)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if types.len() == 2 {
+        Some((types[0], types[1]))
+    } else {
+        None
+    }
 }
 
 // Helper to generate the appropriate parser for a given type
@@ -75,22 +76,27 @@ pub fn generate_type_parser(
             TypeKind::F32 => quote! {
                 Self::parse_f32_literal(#arg_name).map(::ordered_float::OrderedFloat::<f32>)
             },
-            TypeKind::F64 | _ => quote! {
+            _ => quote! {
                 Self::parse_f64_literal(#arg_name).map(::ordered_float::OrderedFloat::<f64>)
             },
         },
         TypeKind::Vec(_inner) => {
             // Extract the actual inner syn::Type for recursive parsing
             if let Some(inner_ty) = extract_vec_inner_type(field_type) {
-                let inner_parser = generate_type_parser(inner_ty, quote! { elem });
+                let inner_parser = generate_type_parser(inner_ty, quote! { &elem });
                 quote! {
                     {
                         use ::syn::spanned::Spanned;
+                        use ::syn::parse::Parser;
                         let expr = Self::unwrap_expr(#arg_name);
 
                         // Handle vec![...] macro
                         if let ::syn::Expr::Macro(mac) = expr {
-                            if mac.mac.path.is_ident("vec") {
+                            let is_vec = mac.mac.path.segments.last()
+                                .map(|s| s.ident.to_string() == "vec")
+                                .unwrap_or(false);
+
+                            if is_vec {
                                 // Parse the vec! macro content as array elements
                                 let tokens = mac.mac.tokens.clone();
 
@@ -103,9 +109,10 @@ pub fn generate_type_parser(
                                     ));
                                 }
 
-                                if let Ok(array_expr) = ::syn::parse2::<::syn::ExprArray>(tokens) {
+                                let parser = ::syn::punctuated::Punctuated::<::syn::Expr, ::syn::Token![,]>::parse_terminated;
+                                if let Ok(args) = parser.parse2(tokens) {
                                     let mut result = Vec::new();
-                                    for elem in array_expr.elems.iter() {
+                                    for elem in args {
                                         match #inner_parser {
                                             Ok(val) => result.push(val),
                                             Err(e) => return Err(e),
@@ -116,7 +123,7 @@ pub fn generate_type_parser(
                                     Err(::syn::Error::new(mac.span(), "Invalid vec! macro syntax"))
                                 }
                             } else {
-                                Err(::syn::Error::new(mac.span(), "Expected vec! macro or array literal"))
+                                Err(::syn::Error::new(mac.span(), "Expected vec! macro"))
                             }
                         }
                         // Handle [...] array literals
@@ -142,27 +149,27 @@ pub fn generate_type_parser(
         TypeKind::Option(_inner) => {
             // This case is for Option types that are NOT inside a tuple variant,
             // e.g., in a struct.
-            if let Type::Path(type_path) = field_type {
-                if let Some(inner_ty) = crate::helpers::extract_option_inner_type(type_path) {
-                    let parse_inner = generate_type_parser(inner_ty, quote! { inner_arg });
-                    return quote! {
-                        {
-                            use ::syn::spanned::Spanned;
-                            match #arg_name {
-                                ::syn::Expr::Path(p) if p.path.is_ident("None") => Ok(None),
-                                ::syn::Expr::Call(call) if call.func.to_token_stream().to_string() == "Some" && call.args.len() == 1 => {
-                                    let inner_arg = &call.args[0];
-                                    #parse_inner.map(Some)
-                                }
-                                other => {
-                                    // Implicit Some
-                                    let inner_arg = other;
-                                    #parse_inner.map(Some)
-                                }
+            if let Type::Path(type_path) = field_type
+                && let Some(inner_ty) = crate::helpers::extract_option_inner_type(type_path)
+            {
+                let parse_inner = generate_type_parser(inner_ty, quote! { inner_arg });
+                return quote! {
+                    {
+                        use ::syn::spanned::Spanned;
+                        match #arg_name {
+                            ::syn::Expr::Path(p) if p.path.is_ident("None") => Ok(None),
+                            ::syn::Expr::Call(call) if matches!(&*call.func, ::syn::Expr::Path(p) if p.path.is_ident("Some")) && call.args.len() == 1 => {
+                                let inner_arg = &call.args[0];
+                                #parse_inner.map(Some)
+                            }
+                            other => {
+                                // Implicit Some
+                                let inner_arg = other;
+                                #parse_inner.map(Some)
                             }
                         }
-                    };
-                }
+                    }
+                };
             }
             // Fallback
             quote! { <#field_type as TryFrom<&::syn::Expr>>::try_from(#arg_name) }
@@ -309,35 +316,33 @@ pub fn generate_arg_processing(
     // Special case for single-argument Option<T> to allow implicit Some(v)
     if field_count == 1 {
         let field = fields.first().unwrap();
-        if let Type::Path(type_path) = &field.ty {
-            if is_option_type(type_path) {
-                if let Some(inner_ty) = crate::helpers::extract_option_inner_type(type_path) {
-                    let parse_inner = generate_type_parser(inner_ty, quote! { inner_arg });
-                    return quote! {
-                        {
-                            use ::syn::spanned::Spanned;
-                            if call_expr.args.len() != 1 {
-                                return Err(::syn::Error::new(call_expr.span(), "Variant expects one argument for Option<T>"));
-                            }
-                            let arg = &call_expr.args[0];
-                            match arg {
-                                // None
-                                ::syn::Expr::Path(p) if p.path.is_ident("None") => Ok(Self::#variant_name(None)),
-                                // Some(inner)
-                                ::syn::Expr::Call(call) if call.func.to_token_stream().to_string() == "Some" && call.args.len() == 1 => {
-                                    let inner_arg = &call.args[0];
-                                    #parse_inner.map(|v| Self::#variant_name(Some(v)))
-                                }
-                                // Implicit Some: treat a bare value as Some(...)
-                                other => {
-                                    let inner_arg = other;
-                                    #parse_inner.map(|v| Self::#variant_name(Some(v)))
-                                }
-                            }
+        if let Type::Path(type_path) = &field.ty
+            && let Some(inner_ty) = crate::helpers::extract_option_inner_type(type_path)
+        {
+            let parse_inner = generate_type_parser(inner_ty, quote! { inner_arg });
+            return quote! {
+                {
+                    use ::syn::spanned::Spanned;
+                    if call_expr.args.len() != 1 {
+                        return Err(::syn::Error::new(call_expr.span(), "Variant expects one argument for Option<T>"));
+                    }
+                    let arg = &call_expr.args[0];
+                    match arg {
+                        // None
+                        ::syn::Expr::Path(p) if p.path.is_ident("None") => Ok(Self::#variant_name(None)),
+                        // Some(inner)
+                        ::syn::Expr::Call(call) if matches!(&*call.func, ::syn::Expr::Path(p) if p.path.is_ident("Some")) && call.args.len() == 1 => {
+                            let inner_arg = &call.args[0];
+                            #parse_inner.map(|v| Self::#variant_name(Some(v)))
                         }
-                    };
+                        // Implicit Some: treat a bare value as Some(...)
+                        other => {
+                            let inner_arg = other;
+                            #parse_inner.map(|v| Self::#variant_name(Some(v)))
+                        }
+                    }
                 }
-            }
+            };
         }
     }
 
@@ -409,16 +414,24 @@ fn generate_numeric_parsers() -> proc_macro2::TokenStream {
                 use ::syn::spanned::Spanned;
                 let expr = Self::unwrap_expr(expr);
                 match expr {
-                    ::syn::Expr::Lit(::syn::ExprLit { lit: ::syn::Lit::Int(lit_int), .. }) => {
-                        lit_int.base10_parse::<#type_ident>().map_err(|e| {
-                            ::syn::Error::new(lit_int.span(), format!("Invalid {}: {}", #type_name, e))
-                        })
-                    }
-                    ::syn::Expr::Unary(::syn::ExprUnary { op: ::syn::UnOp::Neg(_), expr: inner_expr, .. }) => {
-                        if let ::syn::Expr::Lit(::syn::ExprLit { lit: ::syn::Lit::Int(lit_int), .. }) = &**inner_expr {
-                            lit_int.base10_parse::<#type_ident>().map(|n| -n).map_err(|e| {
+                    ::syn::Expr::Lit(expr_lit) => {
+                         if let ::syn::Lit::Int(lit_int) = &expr_lit.lit {
+                            lit_int.base10_parse::<#type_ident>().map_err(|e| {
                                 ::syn::Error::new(lit_int.span(), format!("Invalid {}: {}", #type_name, e))
                             })
+                         } else {
+                            Err(::syn::Error::new(expr.span(), "Expected an integer literal"))
+                         }
+                    }
+                    ::syn::Expr::Unary(::syn::ExprUnary { op: ::syn::UnOp::Neg(_), expr: inner_expr, .. }) => {
+                        if let ::syn::Expr::Lit(expr_lit) = &**inner_expr {
+                            if let ::syn::Lit::Int(lit_int) = &expr_lit.lit {
+                                lit_int.base10_parse::<#type_ident>().map(|n| -n).map_err(|e| {
+                                    ::syn::Error::new(lit_int.span(), format!("Invalid {}: {}", #type_name, e))
+                                })
+                            } else {
+                                Err(::syn::Error::new(inner_expr.span(), "Expected an integer literal after '-'"))
+                            }
                         } else {
                             Err(::syn::Error::new(inner_expr.span(), "Expected an integer literal after '-'"))
                         }
@@ -445,10 +458,14 @@ fn generate_numeric_parsers() -> proc_macro2::TokenStream {
                 use ::syn::spanned::Spanned;
                 let expr = Self::unwrap_expr(expr);
                 match expr {
-                    ::syn::Expr::Lit(::syn::ExprLit { lit: ::syn::Lit::Int(lit_int), .. }) => {
-                        lit_int.base10_parse::<#type_ident>().map_err(|e| {
-                            ::syn::Error::new(lit_int.span(), format!("Invalid {}: {}", #type_name, e))
-                        })
+                    ::syn::Expr::Lit(expr_lit) => {
+                         if let ::syn::Lit::Int(lit_int) = &expr_lit.lit {
+                            lit_int.base10_parse::<#type_ident>().map_err(|e| {
+                                ::syn::Error::new(lit_int.span(), format!("Invalid {}: {}", #type_name, e))
+                            })
+                         } else {
+                            Err(::syn::Error::new(expr.span(), "Expected an integer literal"))
+                         }
                     }
                     _ => Err(::syn::Error::new(expr.span(), "Expected an integer literal")),
                 }
@@ -466,27 +483,37 @@ fn generate_numeric_parsers() -> proc_macro2::TokenStream {
                 use ::syn::spanned::Spanned;
                 let expr = Self::unwrap_expr(expr);
                 match expr {
-                    ::syn::Expr::Lit(::syn::ExprLit { lit: ::syn::Lit::Float(lit_float), .. }) => {
-                        lit_float.base10_parse::<#type_ident>().map_err(|e| {
-                            ::syn::Error::new(lit_float.span(), format!("Invalid {}: {}", #type_name, e))
-                        })
-                    }
-                    ::syn::Expr::Lit(::syn::ExprLit { lit: ::syn::Lit::Int(lit_int), .. }) => {
-                        lit_int.base10_parse::<#type_ident>().map_err(|e| {
-                            ::syn::Error::new(lit_int.span(), format!("Invalid {}: {}", #type_name, e))
-                        })
-                    }
-                    ::syn::Expr::Unary(::syn::ExprUnary { op: ::syn::UnOp::Neg(_), expr: inner_expr, .. }) => {
-                         match &**inner_expr {
-                            ::syn::Expr::Lit(::syn::ExprLit { lit: ::syn::Lit::Float(lit_float), .. }) => {
-                                lit_float.base10_parse::<#type_ident>().map(|n| -n).map_err(|e| {
+                    ::syn::Expr::Lit(expr_lit) => {
+                        match &expr_lit.lit {
+                            ::syn::Lit::Float(lit_float) => {
+                                lit_float.base10_parse::<#type_ident>().map_err(|e| {
                                     ::syn::Error::new(lit_float.span(), format!("Invalid {}: {}", #type_name, e))
                                 })
                             }
-                            ::syn::Expr::Lit(::syn::ExprLit { lit: ::syn::Lit::Int(lit_int), .. }) => {
-                                lit_int.base10_parse::<#type_ident>().map(|n| -n).map_err(|e| {
+                            ::syn::Lit::Int(lit_int) => {
+                                lit_int.base10_parse::<#type_ident>().map_err(|e| {
                                     ::syn::Error::new(lit_int.span(), format!("Invalid {}: {}", #type_name, e))
                                 })
+                            }
+                            _ => Err(::syn::Error::new(expr.span(), "Expected a numeric literal")),
+                        }
+                    }
+                    ::syn::Expr::Unary(::syn::ExprUnary { op: ::syn::UnOp::Neg(_), expr: inner_expr, .. }) => {
+                         match &**inner_expr {
+                            ::syn::Expr::Lit(expr_lit) => {
+                                match &expr_lit.lit {
+                                    ::syn::Lit::Float(lit_float) => {
+                                        lit_float.base10_parse::<#type_ident>().map(|n| -n).map_err(|e| {
+                                            ::syn::Error::new(lit_float.span(), format!("Invalid {}: {}", #type_name, e))
+                                        })
+                                    }
+                                    ::syn::Lit::Int(lit_int) => {
+                                        lit_int.base10_parse::<#type_ident>().map(|n| -n).map_err(|e| {
+                                            ::syn::Error::new(lit_int.span(), format!("Invalid {}: {}", #type_name, e))
+                                        })
+                                    }
+                                    _ => Err(::syn::Error::new(inner_expr.span(), "Expected numeric literal after '-'")),
+                                }
                             }
                             _ => Err(::syn::Error::new(inner_expr.span(), "Expected numeric literal after '-'")),
                         }

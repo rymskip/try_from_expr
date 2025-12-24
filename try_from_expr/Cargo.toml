@@ -8,6 +8,7 @@ license = "MIT"
 repository = "https://github.com/rymskip/try_from_expr"
 keywords = ["syn", "parser", "macro", "derive", "expr"]
 categories = ["development-tools::procedural-macro-helpers", "parsing"]
+readme = "../README.md"
 
 [lib]
 path = "src/lib.rs"
@@ -16,3 +17,7 @@ path = "src/lib.rs"
 ordered-float = { version = "5.0.0", features = ["serde"] }
 syn = { workspace = true }
 try_from_expr_derive = { version = "0.1.0", path = "../try_from_expr_derive" }
+
+[dev-dependencies]
+syn = { workspace = true, features = ["full"] }
+quote = "1.0"
