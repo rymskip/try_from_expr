@@ -33,5 +33,8 @@ fn main() {
     let typo = Config::try_from(&parse_quote!(config(hots = "localhost")))
         .expect_err("an unknown field is rejected")
         .to_string();
-    assert!(typo.contains("Unknown tuple variant 'hots'"), "{typo}");
+    assert_eq!(
+        typo,
+        "Unknown tuple variant 'hots' for enum 'Config'. Valid options: level"
+    );
 }

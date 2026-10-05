@@ -1,4 +1,6 @@
 //! Every example in the README's Meta Syntax section, so the docs cannot drift.
+//! The self-named struct variant examples live in `tests/ui-pass` and
+//! `tests/ui/ambiguous_struct_field.rs`, since clippy flags such enums.
 
 use std::collections::HashMap;
 use syn::{Attribute, Expr, Token, parse_quote, punctuated::Punctuated};

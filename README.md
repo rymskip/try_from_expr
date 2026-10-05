@@ -322,8 +322,54 @@ between = 1
 
 When a struct variant shares its enum's snake_case name, `name(..)` is that
 variant when every argument is one of its fields, and the enum wrapper
-otherwise. A field of that variant may not share a meta name with a tuple
-variant, since `name(field = ..)` would then fit both.
+otherwise:
+
+```rust
+#[derive(TryFromExpr)]
+enum Config {
+    Config { host: String, port: Option<u16> },
+    Verbose,
+    Level(u8),
+}
+```
+
+| Meta form                                  | Parses to                                          |
+| ------------------------------------------ | -------------------------------------------------- |
+| `config(host = "localhost")`               | `Config::Config { host: "localhost", port: None }` |
+| `config(host = "localhost", port = 8080)`  | `Config::Config { host: "localhost", port: Some(8080) }` |
+| `config(config(host = "localhost"))`       | `Config::Config { host: "localhost", port: None }` |
+| `config(verbose)`                          | `Config::Verbose`                                  |
+| `config(level = 3)`                        | `Config::Level(3)`                                 |
+
+A misspelled field is not one of the variant's fields, so the call is read as
+the enum wrapper and reports the variants that would have fit:
+
+```text
+config(hots = "localhost")
+    Unknown tuple variant 'hots' for enum 'Config'. Valid options: level
+```
+
+A field of that variant may not share a meta name with a tuple variant, since
+`config(level = ..)` would then fit both readings. The derive rejects it:
+
+```rust
+#[derive(TryFromExpr)]
+enum Config {
+    Config { level: u8 },
+    Level(u8),
+}
+```
+
+```text
+error: Field `level` shares its meta name with a tuple variant, so `config(level = ..)` is ambiguous
+ --> src/lib.rs:5:14
+  |
+5 |     Config { level: u8 },
+  |              ^^^^^
+```
+
+Clippy's default `enum_variant_names` lint warns about a variant named after
+its enum, so a project using this pattern needs to allow that lint.
 
 ## Children Sharing a Name
 
