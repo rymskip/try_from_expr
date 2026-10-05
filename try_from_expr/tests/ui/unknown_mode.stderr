@@ -1,0 +1,5 @@
+error: expected `wrapper` or `leaf`
+ --> tests/ui/unknown_mode.rs:4:17
+  |
+4 | #[try_from_expr(wrap)]
+  |                 ^^^^

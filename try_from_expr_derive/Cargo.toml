@@ -14,6 +14,7 @@ categories = ["development-tools::procedural-macro-helpers"]
 proc-macro = true
 
 [dependencies]
+heck = "0.5.0"
 proc-macro2 = "1.0.107"
 quote = "1.0.47"
 syn = { workspace = true }

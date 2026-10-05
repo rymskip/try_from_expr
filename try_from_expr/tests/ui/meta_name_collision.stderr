@@ -1,0 +1,5 @@
+error: Variants `HttpServer` and `HTTPServer` both use the meta name `http_server`
+ --> tests/ui/meta_name_collision.rs:6:5
+  |
+6 |     HTTPServer,
+  |     ^^^^^^^^^^

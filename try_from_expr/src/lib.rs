@@ -31,6 +31,14 @@
 //! let value = MyEnum::try_from(&expr).unwrap();
 //! ```
 //!
+//! ## Meta Syntax
+//!
+//! Every variant also parses from a snake_case form suited to attribute
+//! arguments, so the variants above read as `unit`, `tuple = ("hello", 42)`
+//! and `r#struct(field = true)`. A name that is a keyword takes the raw
+//! identifier prefix. Any of these can be wrapped in the enum's own
+//! snake_case name, as in `my_enum(unit)`.
+//!
 //! ## Wrapper vs Leaf Enums
 //!
 //! The macro automatically detects whether your enum is a "wrapper" (contains other enums)

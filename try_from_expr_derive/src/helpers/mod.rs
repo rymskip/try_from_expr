@@ -5,14 +5,18 @@ use syn::{Fields, GenericArgument, PathArguments, Type};
 // Extract the inner type from Option<T>
 pub fn extract_option_inner_type(type_path: &syn::TypePath) -> Option<&Type> {
     let seg = type_path.path.segments.last()?;
-    
+
     if seg.ident != "Option" {
         return None;
     }
 
-    let PathArguments::AngleBracketed(args) = &seg.arguments else { return None };
-    let GenericArgument::Type(inner_ty) = args.args.first()? else { return None };
-    
+    let PathArguments::AngleBracketed(args) = &seg.arguments else {
+        return None;
+    };
+    let GenericArgument::Type(inner_ty) = args.args.first()? else {
+        return None;
+    };
+
     Some(inner_ty)
 }
 
@@ -26,16 +30,15 @@ pub fn is_option_type(type_path: &syn::TypePath) -> bool {
 }
 
 // Extract the type name from a Type for matching
-pub fn extract_type_name(ty: &Type) -> String {
-    match ty {
-        Type::Path(type_path) => type_path
-            .path
-            .segments
-            .last()
-            .map(|seg| seg.ident.to_string())
-            .unwrap_or_else(|| "unknown".to_string()),
-        _ => "unknown".to_string(),
-    }
+pub fn extract_type_name(ty: &Type) -> Option<String> {
+    let Type::Path(type_path) = ty else {
+        return None;
+    };
+    type_path
+        .path
+        .segments
+        .last()
+        .map(|segment| segment.ident.to_string())
 }
 
 // Detect if this is a wrapper enum (all variants are single-field tuples)

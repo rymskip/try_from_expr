@@ -24,7 +24,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-try_from_expr = "0.1.0"
+try_from_expr = "0.1"
 ```
 
 ## Quick Start
@@ -155,6 +155,55 @@ let expr = syn::parse_str("OptionalConfig::Value(None)").unwrap();
 let expr = syn::parse_str(r#"OptionalConfig::Value("text")"#).unwrap();
 ```
 
+## Meta Syntax
+
+Every variant also parses from a snake_case form that reads like an attribute
+argument, the way `#[serde(rename = "..")]` does. The two forms can be mixed.
+
+| Variant                      | Path form                            | Meta form                    |
+| ---------------------------- | ------------------------------------ | ---------------------------- |
+| `Trim`                       | `StringValidator::Trim`              | `trim`                       |
+| `RegexLiteral(Format)`       | `StringValidator::RegexLiteral(..)`  | `regex_literal = ..`         |
+| `Between(i64, i64)`          | `NumberValidator::Between(1, 10)`    | `between = (1, 10)`          |
+| `Length { min, max }`        | `StringValidator::Length { min: 1 }` | `length(min = 1)`            |
+
+Any meta form can be wrapped in its enum's snake_case name, so
+`string_validator(trim)` is the same as `trim`. A wrapper enum routes
+`string_validator(..)` to the variant holding `StringValidator`, and also
+accepts its own variants as `string = trim`.
+
+```rust
+#[derive(TryFromExpr)]
+enum Format {
+    Email,
+    Custom(String),
+}
+
+#[derive(TryFromExpr)]
+enum StringValidator {
+    Trim,
+    RegexLiteral(Format),
+}
+
+#[derive(TryFromExpr)]
+enum Validator {
+    String(StringValidator),
+}
+
+// Both attributes parse to the same validators
+#[validators(
+    StringValidator::Trim,
+    StringValidator::RegexLiteral(Format::Custom(r"^/(?:[^/\\].*)?$"))
+)]
+#[validators(
+    string_validator(trim),
+    string_validator(regex_literal = format(custom = r"^/(?:[^/\\].*)?$")),
+)]
+```
+
+When a struct variant shares its enum's snake_case name, `name(..)` is read as
+the enum wrapper, so write that variant as `name(name(field = ..))`.
+
 ## Force Mode Selection
 
 By default, the macro automatically detects whether your enum is a wrapper or
@@ -182,7 +231,7 @@ The macro analyzes your enum at compile time and generates a
 `TryFrom<&syn::Expr>` implementation that:
 
 1. **Unwraps** any parentheses or group expressions
-2. **Matches** the expression type (path, call, struct, literal)
+2. **Matches** the expression type (path, call, struct, or a meta form)
 3. **Parses** the variant name and validates it belongs to your enum
 4. **Extracts** and parses any parameters or fields
 5. **Constructs** the appropriate enum variant
@@ -203,16 +252,19 @@ The macro provides detailed error messages:
 
 ```rust
 // Unknown variant
-"Unknown variant 'Invalid' for enum 'Setting'. Valid unit variants: Default"
+"Unknown unit variant 'Invalid' for enum 'Setting'"
 
 // Wrong number of arguments
-"Variant 'Coordinate' expects exactly 2 arguments, but 3 were provided"
+"Variant 'Coordinate' expects 2 argument(s), but 3 were provided"
 
 // Type parsing failure
-"Failed to parse argument 1: expected u32, got string literal"
+"Failed to parse argument 1: Expected an integer literal"
 
 // Missing required field
 "Missing required field 'name' for variant 'Config'"
+
+// Unknown meta variant
+"Unknown unit variant 'trimm' for enum 'StringValidator'. Valid options: Trim; in meta form: trim"
 ```
 
 ## Project Structure
