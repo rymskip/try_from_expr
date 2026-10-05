@@ -206,6 +206,45 @@ variant when every argument is one of its fields, and the enum wrapper
 otherwise. A field of that variant may not share a meta name with a tuple
 variant, since `name(field = ..)` would then fit both.
 
+## Children Sharing a Name
+
+Every derived enum publishes the names it accepts bare, through the
+`try_from_expr::meta_names::MetaNames` trait. A wrapper uses them to send a bare
+name such as `trim` straight to the one child that accepts it. Names only clash
+within a shape: `required`, `required = ..` and `required(..)` are distinct.
+
+When two children accept the same bare name, using it bare is an error that
+asks for the qualified form:
+
+```text
+Ambiguous meta name `required` for enum 'Rule': accepted by TextRule, NumberRule.
+Qualify it with `text_rule(..)` or `number_rule(..)`
+```
+
+To rule out overlaps altogether, mark the wrapper `all_unique`. Any shared name,
+including one inside a nested wrapper, then fails to compile:
+
+```rust
+#[derive(TryFromExpr)]
+#[try_from_expr(all_unique)]
+enum Rule {
+    Text(TextRule),
+    Number(NumberRule),
+}
+```
+
+A hand-written child type implements `MetaNames` itself, listing the bare names
+its `TryFrom<&syn::Expr>` accepts:
+
+```rust
+impl MetaNames for Flag {
+    const META_NAMES: MetaNameSet = MetaNameSet {
+        path_names: &["flag"],
+        ..MetaNameSet::empty("Flag")
+    };
+}
+```
+
 ## Force Mode Selection
 
 By default, the macro automatically detects whether your enum is a wrapper or
@@ -246,7 +285,8 @@ The macro has built-in support for:
 -   **Primitives**: `bool`, `char`, `String`, all integer types, `f32`, `f64`
 -   **Collections**: `Vec<T>`, `HashMap<K, V>`, `BTreeMap<K, V>`, `Option<T>`
 -   **Special**: `OrderedFloat<T>` from the `ordered-float` crate
--   **Custom Types**: Any type that implements `TryFrom<&syn::Expr>`
+-   **Custom Types**: Any type that implements `TryFrom<&syn::Expr>`, plus
+    `MetaNames` when a wrapper enum holds it
 
 ## Error Handling
 

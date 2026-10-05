@@ -1,0 +1,5 @@
+error: `all_unique` applies to wrapper enums, and a leaf enum's names are always unique
+ --> tests/ui/all_unique_on_leaf.rs:4:17
+  |
+4 | #[try_from_expr(all_unique)]
+  |                 ^^^^^^^^^^

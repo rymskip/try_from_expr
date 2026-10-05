@@ -22,6 +22,7 @@ enum NumberValidator {
 }
 
 #[derive(Debug, PartialEq, TryFromExpr)]
+#[try_from_expr(all_unique)]
 enum Validator {
     String(StringValidator),
     Number(NumberValidator),

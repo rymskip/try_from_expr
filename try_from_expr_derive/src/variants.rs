@@ -20,6 +20,14 @@ pub struct VariantArms<'a> {
     /// `unknown_meta_variant`, which only the leaf impl reports through.
     pub unknown_meta_fn: TokenStream,
     pub param_list: String,
+    /// Names this enum accepts bare as `name`: unit variants in meta form and as paths.
+    pub path_names: Vec<String>,
+    /// Names this enum accepts bare as `name = value`: its tuple variants.
+    pub assign_names: Vec<String>,
+    /// Names this enum accepts bare as `name(..)`: its struct variants.
+    pub call_names: Vec<String>,
+    /// The enum's own meta name, as in `string_validator(..)`.
+    pub type_snake: String,
 }
 
 impl<'a> VariantArms<'a> {
@@ -35,6 +43,7 @@ impl<'a> VariantArms<'a> {
         let mut struct_arms = Vec::new();
         let mut meta_tuple_arms = Vec::new();
         let mut meta_struct_arms = Vec::new();
+        let mut path_names = Vec::new();
         let type_snake = enum_name.unraw().to_string().to_snake_case();
         // Fields of a struct variant that shares the enum's meta name
         let mut self_named_fields: Option<Vec<&Ident>> = None;
@@ -52,6 +61,11 @@ impl<'a> VariantArms<'a> {
 
             match &variant.fields {
                 Fields::Unit => {
+                    let bare_path_name = ident.unraw().to_string();
+                    if bare_path_name != snake {
+                        path_names.push(bare_path_name);
+                    }
+                    path_names.push(snake.clone());
                     unit_names.push(name);
                     unit_idents.push(ident);
                     unit_snakes.push(snake);
@@ -228,6 +242,10 @@ impl<'a> VariantArms<'a> {
             } else {
                 param_names.join(", ")
             },
+            path_names,
+            assign_names: tuple_snakes,
+            call_names: struct_snakes,
+            type_snake,
         })
     }
 }

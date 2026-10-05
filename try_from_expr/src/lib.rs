@@ -59,6 +59,17 @@
 //!     WithValue(String),
 //! }
 //! ```
+//!
+//! ## Children Sharing a Name
+//!
+//! A wrapper routes a bare name like `trim` to the one child that accepts it,
+//! using the names each child publishes through [`meta_names::MetaNames`]. A
+//! bare name that two children accept is a parse error asking for the
+//! qualified form, such as `string_validator(trim)`. Add
+//! `#[try_from_expr(all_unique)]` to a wrapper to make any overlap a compile
+//! error instead. A hand-written child type implements `MetaNames` itself.
+
+pub mod meta_names;
 
 /// The derive macro for generating `TryFrom<&syn::Expr>` implementations.
 ///
