@@ -125,7 +125,7 @@ impl TypeKind {
             SynType::TraitObject(to) => TypeKind::Other(to.to_token_stream().to_string()),
 
             // fn(...) -> ... -> fallback to string
-            SynType::BareFn(f) => TypeKind::Other(f.to_token_stream().to_string()),
+            SynType::FnPtr(fn_ptr) => TypeKind::Other(fn_ptr.to_token_stream().to_string()),
 
             // _ (infer) -> fallback to string
             SynType::Infer(i) => TypeKind::Other(i.to_token_stream().to_string()),
