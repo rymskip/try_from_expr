@@ -35,6 +35,9 @@ impl<'a> VariantArms<'a> {
         let mut struct_arms = Vec::new();
         let mut meta_tuple_arms = Vec::new();
         let mut meta_struct_arms = Vec::new();
+        let type_snake = enum_name.unraw().to_string().to_snake_case();
+        // Fields of a struct variant that shares the enum's meta name
+        let mut self_named_fields: Option<Vec<&Ident>> = None;
 
         for variant in &data.variants {
             let ident = &variant.ident;
@@ -69,6 +72,15 @@ impl<'a> VariantArms<'a> {
                         generate_struct_field_parsing(ident, fields, FieldSource::StructLiteral)?;
                     let meta_parser =
                         generate_struct_field_parsing(ident, fields, FieldSource::MetaCall)?;
+                    if snake == type_snake {
+                        self_named_fields = Some(
+                            fields
+                                .named
+                                .iter()
+                                .filter_map(|field| field.ident.as_ref())
+                                .collect(),
+                        );
+                    }
                     struct_arms.push(quote! { #name => #literal_parser, });
                     meta_struct_arms
                         .push(quote! { Some(#snake) => Result::map(#meta_parser, Some), });
@@ -78,7 +90,40 @@ impl<'a> VariantArms<'a> {
         }
 
         let enum_name_str = enum_name.to_string();
-        let type_snake = enum_name.unraw().to_string().to_snake_case();
+
+        // `name(field = ..)` reads as the same-named struct variant when every
+        // argument is one of its fields, so a field sharing a tuple variant's
+        // meta name would make `name(field = ..)` ambiguous.
+        let struct_call_check = match &self_named_fields {
+            Some(fields) => {
+                let mut field_names = Vec::new();
+                for field in fields {
+                    let field_name = field.unraw().to_string();
+                    if tuple_snakes.contains(&field_name) {
+                        return Err(Error::new(
+                            field.span(),
+                            format!(
+                                "Field `{field_name}` shares its meta name with a tuple variant, \
+                                 so `{type_snake}({field_name} = ..)` is ambiguous"
+                            ),
+                        ));
+                    }
+                    field_names.push(field_name);
+                }
+                quote! {
+                    let reads_as_struct = call_expr.args.iter().all(|arg| {
+                        let ::syn::Expr::Assign(assign) = arg else { return false };
+                        let ::syn::Expr::Path(path_expr) = &*assign.left else { return false };
+                        Self::meta_ident_name(&path_expr.path)
+                            .is_some_and(|name| [#(#field_names),*].contains(&name.as_str()))
+                    });
+                    if reads_as_struct {
+                        return Ok(None);
+                    }
+                }
+            }
+            None => TokenStream::new(),
+        };
 
         let shared_fns = quote! {
             fn parse_meta_variant(expr: &::syn::Expr) -> Result<Option<Self>, ::syn::Error> {
@@ -111,6 +156,7 @@ impl<'a> VariantArms<'a> {
                 if Self::meta_ident_name(&path_expr.path).as_deref() != Some(#type_snake) {
                     return Ok(None);
                 }
+                #struct_call_check
                 let mut args = call_expr.args.iter();
                 match (args.next(), args.next()) {
                     (Some(arg), None) => Ok(Some(arg)),

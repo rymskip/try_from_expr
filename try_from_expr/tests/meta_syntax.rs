@@ -271,7 +271,9 @@ fn test_keyword_names_use_raw_identifiers() {
 }
 
 #[test]
-fn test_derive_errors() {
+fn test_derive_ui() {
     let cases = trybuild::TestCases::new();
     cases.compile_fail("tests/ui/*.rs");
+    // Enums that clippy's `enum_variant_names` flags, built and run by rustc alone
+    cases.pass("tests/ui-pass/*.rs");
 }

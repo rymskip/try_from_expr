@@ -201,8 +201,10 @@ enum Validator {
 )]
 ```
 
-When a struct variant shares its enum's snake_case name, `name(..)` is read as
-the enum wrapper, so write that variant as `name(name(field = ..))`.
+When a struct variant shares its enum's snake_case name, `name(..)` is that
+variant when every argument is one of its fields, and the enum wrapper
+otherwise. A field of that variant may not share a meta name with a tuple
+variant, since `name(field = ..)` would then fit both.
 
 ## Force Mode Selection
 
