@@ -158,19 +158,9 @@ let expr = syn::parse_str(r#"OptionalConfig::Value("text")"#).unwrap();
 ## Meta Syntax
 
 Every variant also parses from a snake_case form that reads like an attribute
-argument, the way `#[serde(rename = "..")]` does. The two forms can be mixed.
-
-| Variant                      | Path form                            | Meta form                    |
-| ---------------------------- | ------------------------------------ | ---------------------------- |
-| `Trim`                       | `StringValidator::Trim`              | `trim`                       |
-| `RegexLiteral(Format)`       | `StringValidator::RegexLiteral(..)`  | `regex_literal = ..`         |
-| `Between(i64, i64)`          | `NumberValidator::Between(1, 10)`    | `between = (1, 10)`          |
-| `Length { min, max }`        | `StringValidator::Length { min: 1 }` | `length(min = 1)`            |
-
-Any meta form can be wrapped in its enum's snake_case name, so
-`string_validator(trim)` is the same as `trim`. A wrapper enum routes
-`string_validator(..)` to the variant holding `StringValidator`, and also
-accepts its own variants as `string = trim`.
+argument, the way `#[serde(rename = "..")]` does. A value inside a meta form
+can itself be in path form, as in `regex_literal = Format::Email`. The examples
+below use these enums:
 
 ```rust
 #[derive(TryFromExpr)]
@@ -182,24 +172,153 @@ enum Format {
 #[derive(TryFromExpr)]
 enum StringValidator {
     Trim,
+    MaxLength(Option<usize>),
+    OneOf(Vec<String>),
     RegexLiteral(Format),
+    Length { min: usize, max: Option<usize> },
+}
+
+#[derive(TryFromExpr)]
+enum NumberValidator {
+    Positive,
+    Between(i64, i64),
+    Labels(HashMap<String, i64>),
 }
 
 #[derive(TryFromExpr)]
 enum Validator {
     String(StringValidator),
+    Number(NumberValidator),
 }
+```
 
-// Both attributes parse to the same validators
+### Unit variants
+
+A unit variant is its snake_case name. The bare PascalCase name works too.
+
+| Meta form | Parses to                |
+| --------- | ------------------------ |
+| `trim`    | `StringValidator::Trim`  |
+| `Trim`    | `StringValidator::Trim`  |
+
+### Tuple variants
+
+A single-field variant takes `name = value`. An `Option` field accepts `None`,
+`Some(..)` or a bare value, and a field holding another enum takes that enum in
+either form.
+
+| Meta form                            | Parses to                                       |
+| ------------------------------------ | ----------------------------------------------- |
+| `max_length = 64`                    | `MaxLength(Some(64))`                           |
+| `max_length = Some(64)`              | `MaxLength(Some(64))`                           |
+| `max_length = None`                  | `MaxLength(None)`                               |
+| `one_of = ["draft", "published"]`    | `OneOf(vec!["draft".into(), "published".into()])` |
+| `one_of = vec!["draft"]`             | `OneOf(vec!["draft".into()])`                   |
+| `regex_literal = format(email)`      | `RegexLiteral(Format::Email)`                   |
+| `regex_literal = Format::Email`      | `RegexLiteral(Format::Email)`                   |
+| `regex_literal = format(custom = "^a")` | `RegexLiteral(Format::Custom("^a".into()))`  |
+
+A variant with several fields takes them as a tuple, and a map takes an array
+of key and value pairs.
+
+| Meta form                              | Parses to                                  |
+| -------------------------------------- | ------------------------------------------ |
+| `between = (1, 10)`                    | `NumberValidator::Between(1, 10)`          |
+| `between = (-5, 5)`                    | `NumberValidator::Between(-5, 5)`          |
+| `labels = [("low", 0), ("high", 100)]` | `NumberValidator::Labels({"low": 0, "high": 100})` |
+
+### Struct variants
+
+A struct variant is called with `field = value` arguments, in any order. A
+field of type `Option` can be left out.
+
+| Meta form                       | Parses to                              |
+| ------------------------------- | -------------------------------------- |
+| `length(min = 1, max = 64)`     | `Length { min: 1, max: Some(64) }`     |
+| `length(max = 64, min = 1)`     | `Length { min: 1, max: Some(64) }`     |
+| `length(min = 1)`               | `Length { min: 1, max: None }`         |
+
+### Naming the enum
+
+Any meta form can be wrapped in its enum's snake_case name. On the enum itself
+this changes nothing, but in a wrapper it picks the child explicitly.
+
+| Meta form                                | Parses to                                     |
+| ---------------------------------------- | --------------------------------------------- |
+| `string_validator(trim)`                 | `StringValidator::Trim`                       |
+| `string_validator(length(min = 1))`      | `StringValidator::Length { min: 1, max: None }` |
+| `number_validator(between = (1, 10))`    | `NumberValidator::Between(1, 10)`             |
+
+### Wrapper enums
+
+A wrapper accepts its children's forms. A bare name goes to the child that
+accepts it (see [Children Sharing a Name](#children-sharing-a-name)), a named
+child goes to that child, and the wrapper's own variants take `name = value`
+like any tuple variant.
+
+| Meta form given to `Validator`       | Parses to                                          |
+| ------------------------------------ | -------------------------------------------------- |
+| `trim`                               | `Validator::String(StringValidator::Trim)`         |
+| `between = (1, 10)`                  | `Validator::Number(NumberValidator::Between(1, 10))` |
+| `string_validator(max_length = 64)`  | `Validator::String(StringValidator::MaxLength(Some(64)))` |
+| `number = positive`                  | `Validator::Number(NumberValidator::Positive)`     |
+| `validator(string = trim)`           | `Validator::String(StringValidator::Trim)`         |
+| `StringValidator::Trim`              | `Validator::String(StringValidator::Trim)`         |
+
+### Keywords
+
+A name that is a Rust keyword takes the raw identifier prefix, so a variant
+`Type(String)` is written `r#type = "text"` and a variant `Ref { r#type: u8 }`
+is written `r#ref(r#type = 3)`.
+
+### Parsing an attribute
+
+The meta forms are ordinary Rust expressions, so an attribute's arguments parse
+as a comma-separated list of `syn::Expr`:
+
+```rust
+use syn::{Attribute, Expr, Token, punctuated::Punctuated};
+
+let attr: Attribute = syn::parse_quote!(#[validators(
+    trim,
+    length(min = 1, max = 64),
+    string_validator(regex_literal = format(custom = r"^/(?:[^/\\].*)?$")),
+)]);
+
+let validators = attr
+    .parse_args_with(Punctuated::<Expr, Token![,]>::parse_terminated)?
+    .iter()
+    .map(Validator::try_from)
+    .collect::<syn::Result<Vec<_>>>()?;
+```
+
+The equivalent path forms parse to the same values:
+
+```rust
 #[validators(
     StringValidator::Trim,
-    StringValidator::RegexLiteral(Format::Custom(r"^/(?:[^/\\].*)?$"))
-)]
-#[validators(
-    string_validator(trim),
-    string_validator(regex_literal = format(custom = r"^/(?:[^/\\].*)?$")),
+    StringValidator::Length { min: 1, max: Some(64) },
+    StringValidator::RegexLiteral(Format::Custom(r"^/(?:[^/\\].*)?$")),
 )]
 ```
+
+### Mistakes
+
+A form that names nothing reports the names that would have worked:
+
+```text
+length(min = 1, mx = 64)
+    Unknown field 'mx' for variant 'Length'. Valid fields: min, max
+
+string_validator(trimm)
+    Unknown unit variant 'trimm' for enum 'StringValidator'.
+    Valid options: Trim; in meta form: trim
+
+between = 1
+    Variant 'Between' expects a tuple of 2 values
+```
+
+### A struct variant named after its enum
 
 When a struct variant shares its enum's snake_case name, `name(..)` is that
 variant when every argument is one of its fields, and the enum wrapper
