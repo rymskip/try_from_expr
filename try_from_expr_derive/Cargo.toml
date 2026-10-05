@@ -1,6 +1,6 @@
 [package]
 name = "try_from_expr_derive"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 authors = ["Jakob Lochinski"]
 description = "Derive macro for try_from_expr - generates TryFrom<&syn::Expr> implementations"

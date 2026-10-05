@@ -10,7 +10,7 @@ crate which re-exports this macro:
 
 ```toml
 [dependencies]
-try_from_expr = "0.1"
+try_from_expr = "0.2"
 ```
 
 ## Implementation Details

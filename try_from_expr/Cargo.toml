@@ -1,6 +1,6 @@
 [package]
 name = "try_from_expr"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 authors = ["Jakob Lochinski"]
 description = "A procedural macro for generating TryFrom<&syn::Expr> implementations for enums"
@@ -17,7 +17,7 @@ path = "src/lib.rs"
 const_panic = { version = "0.2.17", default-features = false }
 ordered-float = { version = "5.5.0", features = ["serde"] }
 syn = { workspace = true }
-try_from_expr_derive = { version = "0.1.0", path = "../try_from_expr_derive" }
+try_from_expr_derive = { version = "0.2.0", path = "../try_from_expr_derive" }
 
 [dev-dependencies]
 trybuild = "1.0.121"

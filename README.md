@@ -24,7 +24,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-try_from_expr = "0.1"
+try_from_expr = "0.2"
 ```
 
 ## Quick Start
