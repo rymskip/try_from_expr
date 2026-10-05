@@ -10,7 +10,7 @@ crate which re-exports this macro:
 
 ```toml
 [dependencies]
-try_from_expr = "0.1.0"
+try_from_expr = "0.2"
 ```
 
 ## Implementation Details
@@ -30,7 +30,7 @@ The macro distinguishes between two types of enums:
 
 **Leaf Enums**: Enums with concrete values
 
--   Parse exact variant names
+-   Parse exact variant names, or their snake_case meta form
 -   Validate enum membership
 -   Extract and parse parameters
 

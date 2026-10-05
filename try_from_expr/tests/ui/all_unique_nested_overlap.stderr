@@ -1,0 +1,7 @@
+error[E0080]: evaluation panicked: Meta name `Required` is accepted by both `TextRule` and `NumberRule` in `Rule`, and `Field` is marked `all_unique`
+  --> tests/ui/all_unique_nested_overlap.rs:24:10
+   |
+24 | #[derive(TryFromExpr)]
+   |          ^^^^^^^^^^^ evaluation of `_` failed here
+   |
+   = note: this error originates in the derive macro `TryFromExpr` (in Nightly builds, run with -Z macro-backtrace for more info)

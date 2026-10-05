@@ -1,0 +1,22 @@
+error[E0277]: `Point` is held by a wrapper enum but does not publish its meta names
+  --> tests/ui/child_without_meta_names.rs:15:11
+   |
+15 |     Point(Point),
+   |           ^^^^^ a wrapper enum's child must implement `MetaNames`
+   |
+help: the trait `MetaNames` is not implemented for `Point`
+  --> tests/ui/child_without_meta_names.rs:3:1
+   |
+ 3 | struct Point;
+   | ^^^^^^^^^^^^
+   = note: derive `TryFromExpr` for it, or implement `MetaNames` listing the bare names its `TryFrom<&syn::Expr>` accepts
+   = help: the following other types implement trait `MetaNames`:
+             BTreeMap<Key, Value>
+             Geometry
+             HashMap<Key, Value>
+             Option<Inner>
+             OrderedFloat<Float>
+             String
+             Vec<Element>
+             bool
+           and $N others

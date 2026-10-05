@@ -31,6 +31,14 @@
 //! let value = MyEnum::try_from(&expr).unwrap();
 //! ```
 //!
+//! ## Meta Syntax
+//!
+//! Every variant also parses from a snake_case form suited to attribute
+//! arguments, so the variants above read as `unit`, `tuple = ("hello", 42)`
+//! and `r#struct(field = true)`. A name that is a keyword takes the raw
+//! identifier prefix. Any of these can be wrapped in the enum's own
+//! snake_case name, as in `my_enum(unit)`.
+//!
 //! ## Wrapper vs Leaf Enums
 //!
 //! The macro automatically detects whether your enum is a "wrapper" (contains other enums)
@@ -51,6 +59,17 @@
 //!     WithValue(String),
 //! }
 //! ```
+//!
+//! ## Children Sharing a Name
+//!
+//! A wrapper routes a bare name like `trim` to the one child that accepts it,
+//! using the names each child publishes through [`meta_names::MetaNames`]. A
+//! bare name that two children accept is a parse error asking for the
+//! qualified form, such as `string_validator(trim)`. Add
+//! `#[try_from_expr(all_unique)]` to a wrapper to make any overlap a compile
+//! error instead. A hand-written child type implements `MetaNames` itself.
+
+pub mod meta_names;
 
 /// The derive macro for generating `TryFrom<&syn::Expr>` implementations.
 ///

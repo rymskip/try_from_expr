@@ -1,23 +1,21 @@
 [package]
 name = "try_from_expr"
-version = "0.1.1"
-edition = "2024"
-authors = ["Jakob Lochinski"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 description = "A procedural macro for generating TryFrom<&syn::Expr> implementations for enums"
-license = "MIT"
-repository = "https://github.com/rymskip/try_from_expr"
+license.workspace = true
+repository.workspace = true
 keywords = ["syn", "parser", "macro", "derive", "expr"]
 categories = ["development-tools::procedural-macro-helpers", "parsing"]
 readme = "../README.md"
 
-[lib]
-path = "src/lib.rs"
-
 [dependencies]
-ordered-float = { version = "5.0.0", features = ["serde"] }
+const_panic = { version = "0.2.17", default-features = false }
+ordered-float = { version = "5.5.0", features = ["serde"] }
 syn = { workspace = true }
-try_from_expr_derive = { version = "0.1.0", path = "../try_from_expr_derive" }
+try_from_expr_derive = { workspace = true }
 
 [dev-dependencies]
-syn = { workspace = true, features = ["full"] }
-quote = "1.0"
+trybuild = "1.0.121"
+

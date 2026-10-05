@@ -1,23 +1,19 @@
 [package]
 name = "try_from_expr_derive"
-version = "0.1.1"
-edition = "2024"
-authors = ["Jakob Lochinski"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
 description = "Derive macro for try_from_expr - generates TryFrom<&syn::Expr> implementations"
-license = "MIT"
-repository = "https://github.com/rymskip/try_from_expr"
+license.workspace = true
+repository.workspace = true
 keywords = ["syn", "parser", "macro", "derive", "proc-macro"]
 categories = ["development-tools::procedural-macro-helpers"]
-
 
 [lib]
 proc-macro = true
 
 [dependencies]
-proc-macro2 = "1.0.95"
-quote = "1.0.40"
+heck = "0.5.0"
+proc-macro2 = "1.0.107"
+quote = "1.0.47"
 syn = { workspace = true }
-
-
-[features]
-default = []

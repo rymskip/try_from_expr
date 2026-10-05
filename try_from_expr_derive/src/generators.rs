@@ -1,25 +1,33 @@
 use crate::helpers::{is_option_type, types::TypeKind};
 use quote::quote;
-use syn::Type;
+use syn::{Type, ext::IdentExt};
 
 // Helper to extract inner type from Vec<T>
 fn extract_vec_inner_type(ty: &Type) -> Option<&Type> {
-    let Type::Path(type_path) = ty else { return None };
+    let Type::Path(type_path) = ty else {
+        return None;
+    };
     let seg = type_path.path.segments.last()?;
 
     if seg.ident != "Vec" {
         return None;
     }
 
-    let syn::PathArguments::AngleBracketed(args) = &seg.arguments else { return None };
-    let syn::GenericArgument::Type(inner) = args.args.first()? else { return None };
+    let syn::PathArguments::AngleBracketed(args) = &seg.arguments else {
+        return None;
+    };
+    let syn::GenericArgument::Type(inner) = args.args.first()? else {
+        return None;
+    };
 
     Some(inner)
 }
 
 // Helper to extract key and value types from HashMap<K, V> or BTreeMap<K, V>
 fn extract_map_types(ty: &Type) -> Option<(&Type, &Type)> {
-    let Type::Path(type_path) = ty else { return None };
+    let Type::Path(type_path) = ty else {
+        return None;
+    };
     let seg = type_path.path.segments.last()?;
 
     let ident_str = seg.ident.to_string();
@@ -27,7 +35,9 @@ fn extract_map_types(ty: &Type) -> Option<(&Type, &Type)> {
         return None;
     }
 
-    let syn::PathArguments::AngleBracketed(args) = &seg.arguments else { return None };
+    let syn::PathArguments::AngleBracketed(args) = &seg.arguments else {
+        return None;
+    };
 
     let types: Vec<&Type> = args
         .args
@@ -234,69 +244,102 @@ pub fn generate_type_parser(
     }
 }
 
+/// Where a struct variant's fields are read from.
+pub enum FieldSource {
+    /// `Enum::Variant { field: value }`, bound as `struct_expr`.
+    StructLiteral,
+    /// `variant(field = value)`, bound as `call_expr`.
+    MetaCall,
+}
+
+/// Where a tuple variant's values are read from.
+pub enum ArgSource {
+    /// `Enum::Variant(a, b)`, bound as `call_expr`.
+    Call,
+    /// `variant = a` or `variant = (a, b)`, bound as `assign`.
+    Assign,
+}
+
 pub fn generate_struct_field_parsing(
     variant_name: &syn::Ident,
     fields: &syn::FieldsNamed,
-) -> proc_macro2::TokenStream {
-    let field_parsers: Vec<_> = fields.named.iter().map(|f| {
-        let name = f.ident.as_ref().unwrap();
-        let name_str = name.to_string();
-        let ty = &f.ty;
-
-        let is_option = if let Type::Path(tp) = ty {
-            is_option_type(tp)
-        } else {
-            false
+    source: FieldSource,
+) -> syn::Result<proc_macro2::TokenStream> {
+    let mut field_names = Vec::new();
+    let mut field_parsers = Vec::new();
+    for field in &fields.named {
+        let Some(name) = &field.ident else {
+            return Err(syn::Error::new_spanned(
+                field,
+                "Named variant field has no name",
+            ));
         };
+        field_names.push(name);
+        field_parsers.push(generate_field_parser(
+            variant_name,
+            name,
+            &field.ty,
+            &source,
+        ));
+    }
 
-        if is_option {
-            let inner_parser = generate_type_parser(ty, quote! { field_expr });
-            quote! {
-                let #name = if let Some(field_expr) = field_map.get(#name_str) {
-                    match #inner_parser {
-                        Ok(val) => val,
-                        Err(e) => return Err(::syn::Error::new(
-                            field_expr.span(),
-                            format!("Failed to parse optional field '{}': {}", #name_str, e)
-                        )),
-                    }
-                } else {
-                    None
-                };
-            }
-        } else {
-            let parser = generate_type_parser(ty, quote! { field_expr });
-            quote! {
-                let #name = {
-                    let field_expr = field_map.get(#name_str)
-                        .ok_or_else(|| ::syn::Error::new(
-                            struct_expr.span(),
-                            format!("Missing required field '{}' for variant '{}'", #name_str, stringify!(#variant_name))
-                        ))?;
-                    match #parser {
-                        Ok(val) => val,
-                        Err(e) => return Err(::syn::Error::new(
-                            field_expr.span(),
-                            format!("Failed to parse field '{}': {}", #name_str, e)
-                        )),
-                    }
-                };
-            }
+    let field_name_strs: Vec<_> = field_names
+        .iter()
+        .map(|name| name.unraw().to_string())
+        .collect();
+    let valid_fields = field_name_strs.join(", ");
+    let insert_field = quote! {
+        let name_str = ::syn::ext::IdentExt::unraw(name).to_string();
+        if ![#(#field_name_strs),*].contains(&name_str.as_str()) {
+            return Err(::syn::Error::new(
+                name.span(),
+                format!("Unknown field '{}' for variant '{}'. Valid fields: {}", name_str, stringify!(#variant_name), #valid_fields)
+            ));
         }
-    }).collect();
+        if field_map.insert(name_str, value).is_some() {
+            return Err(::syn::Error::new(name.span(), format!("Duplicate field '{}'", name)));
+        }
+    };
 
-    let field_names: Vec<_> = fields.named.iter().map(|f| &f.ident).collect();
+    let collect_fields = match source {
+        FieldSource::StructLiteral => quote! {
+            if let Some(dot2_token) = &struct_expr.dot2_token {
+                return Err(::syn::Error::new(dot2_token.span(), "Struct update syntax `..` is not supported"));
+            }
+            for field in struct_expr.fields.iter() {
+                let ::syn::Member::Named(name) = &field.member else {
+                    return Err(::syn::Error::new(
+                        field.member.span(),
+                        format!("Variant '{}' has named fields, not positional ones", stringify!(#variant_name))
+                    ));
+                };
+                let value = &field.expr;
+                #insert_field
+            }
+        },
+        FieldSource::MetaCall => quote! {
+            for arg in call_expr.args.iter() {
+                let ::syn::Expr::Assign(assign) = arg else {
+                    return Err(::syn::Error::new(arg.span(), "Expected `field = value`"));
+                };
+                let Some(name) = (match &*assign.left {
+                    ::syn::Expr::Path(path_expr) => path_expr.path.get_ident(),
+                    _ => None,
+                }) else {
+                    return Err(::syn::Error::new(assign.left.span(), "Expected a field name"));
+                };
+                let value = &*assign.right;
+                #insert_field
+            }
+        },
+    };
 
-    quote! {
+    Ok(quote! {
         {
             use ::syn::spanned::Spanned;
 
             let mut field_map = ::std::collections::HashMap::new();
-            for field in struct_expr.fields.iter() {
-                if let ::syn::Member::Named(name) = &field.member {
-                    field_map.insert(name.to_string(), &field.expr);
-                }
-            }
+            #collect_fields
 
             #(#field_parsers)*
 
@@ -304,93 +347,144 @@ pub fn generate_struct_field_parsing(
                 #(#field_names,)*
             })
         }
+    })
+}
+
+fn generate_field_parser(
+    variant_name: &syn::Ident,
+    name: &syn::Ident,
+    ty: &Type,
+    source: &FieldSource,
+) -> proc_macro2::TokenStream {
+    let name_str = name.unraw().to_string();
+    let parser = generate_type_parser(ty, quote! { field_expr });
+
+    if let Type::Path(type_path) = ty
+        && is_option_type(type_path)
+    {
+        return quote! {
+            let #name = if let Some(field_expr) = field_map.get(#name_str) {
+                match #parser {
+                    Ok(value) => value,
+                    Err(error) => return Err(::syn::Error::new(
+                        field_expr.span(),
+                        format!("Failed to parse optional field '{}': {}", #name_str, error)
+                    )),
+                }
+            } else {
+                None
+            };
+        };
+    }
+
+    let source_span = match source {
+        FieldSource::StructLiteral => quote! { struct_expr.span() },
+        FieldSource::MetaCall => quote! { call_expr.span() },
+    };
+    quote! {
+        let #name = {
+            let field_expr = field_map.get(#name_str)
+                .ok_or_else(|| ::syn::Error::new(
+                    #source_span,
+                    format!("Missing required field '{}' for variant '{}'", #name_str, stringify!(#variant_name))
+                ))?;
+            match #parser {
+                Ok(value) => value,
+                Err(error) => return Err(::syn::Error::new(
+                    field_expr.span(),
+                    format!("Failed to parse field '{}': {}", #name_str, error)
+                )),
+            }
+        };
     }
 }
 
 pub fn generate_arg_processing(
     variant_name: &syn::Ident,
     fields: &syn::punctuated::Punctuated<syn::Field, syn::Token![,]>,
+    source: ArgSource,
 ) -> proc_macro2::TokenStream {
     let field_count = fields.len();
 
-    // Special case for single-argument Option<T> to allow implicit Some(v)
-    if field_count == 1 {
-        let field = fields.first().unwrap();
-        if let Type::Path(type_path) = &field.ty
-            && let Some(inner_ty) = crate::helpers::extract_option_inner_type(type_path)
-        {
-            let parse_inner = generate_type_parser(inner_ty, quote! { inner_arg });
-            return quote! {
-                {
-                    use ::syn::spanned::Spanned;
-                    if call_expr.args.len() != 1 {
-                        return Err(::syn::Error::new(call_expr.span(), "Variant expects one argument for Option<T>"));
-                    }
-                    let arg = &call_expr.args[0];
-                    match arg {
-                        // None
-                        ::syn::Expr::Path(p) if p.path.is_ident("None") => Ok(Self::#variant_name(None)),
-                        // Some(inner)
-                        ::syn::Expr::Call(call) if matches!(&*call.func, ::syn::Expr::Path(p) if p.path.is_ident("Some")) && call.args.len() == 1 => {
-                            let inner_arg = &call.args[0];
-                            #parse_inner.map(|v| Self::#variant_name(Some(v)))
-                        }
-                        // Implicit Some: treat a bare value as Some(...)
-                        other => {
-                            let inner_arg = other;
-                            #parse_inner.map(|v| Self::#variant_name(Some(v)))
-                        }
-                    }
-                }
+    let collect_args = match source {
+        ArgSource::Call => quote! {
+            let args: Vec<&::syn::Expr> = call_expr.args.iter().collect();
+            let args_span = call_expr.span();
+        },
+        ArgSource::Assign if field_count == 1 => quote! {
+            let args: Vec<&::syn::Expr> = vec![&*assign.right];
+            let args_span = assign.right.span();
+        },
+        ArgSource::Assign => quote! {
+            let args: Vec<&::syn::Expr> = match Self::unwrap_expr(&assign.right) {
+                ::syn::Expr::Tuple(tuple) => tuple.elems.iter().collect(),
+                other => return Err(::syn::Error::new(
+                    other.span(),
+                    format!("Variant '{}' expects a tuple of {} values", stringify!(#variant_name), #field_count)
+                )),
             };
-        }
+            let args_span = assign.right.span();
+        },
+    };
+
+    // A single Option<T> argument accepts a bare value as an implicit Some
+    if field_count == 1
+        && let Some(field) = fields.first()
+        && let Type::Path(type_path) = &field.ty
+        && let Some(inner_ty) = crate::helpers::extract_option_inner_type(type_path)
+    {
+        let parse_inner = generate_type_parser(inner_ty, quote! { inner_arg });
+        return quote! {
+            {
+                use ::syn::spanned::Spanned;
+                #collect_args
+                if args.len() != 1 {
+                    return Err(::syn::Error::new(args_span, "Variant expects one argument for Option<T>"));
+                }
+                match args[0] {
+                    ::syn::Expr::Path(path_expr) if path_expr.path.is_ident("None") => Ok(Self::#variant_name(None)),
+                    ::syn::Expr::Call(call) if matches!(&*call.func, ::syn::Expr::Path(path_expr) if path_expr.path.is_ident("Some")) && call.args.len() == 1 => {
+                        let inner_arg = &call.args[0];
+                        #parse_inner.map(|value| Self::#variant_name(Some(value)))
+                    }
+                    inner_arg => #parse_inner.map(|value| Self::#variant_name(Some(value))),
+                }
+            }
+        };
     }
 
-    // General case for any number of arguments
-    let parsers: Vec<_> = fields
-        .iter()
-        .enumerate()
-        .map(|(i, field)| {
-            let field_type = &field.ty;
-            let arg_name = quote! { &call_expr.args[#i] };
-            generate_type_parser(field_type, arg_name)
-        })
+    let value_names: Vec<_> = (0..field_count)
+        .map(|index| quote::format_ident!("val{}", index))
         .collect();
-
-    let assignments: Vec<_> = (0..field_count)
-        .map(|i| {
-            let var_name =
-                proc_macro2::Ident::new(&format!("val{}", i), proc_macro2::Span::call_site());
-            let parser = &parsers[i];
-            quote! {
-                let #var_name = match #parser {
-                    Ok(val) => val,
-                    Err(e) => return Err(::syn::Error::new(
-                        call_expr.args[#i].span(),
-                        format!("Failed to parse argument {}: {}", #i + 1, e)
-                    )),
-                };
-            }
-        })
-        .collect();
-
-    let constructor_args = (0..field_count)
-        .map(|i| proc_macro2::Ident::new(&format!("val{}", i), proc_macro2::Span::call_site()));
+    let assignments = fields.iter().enumerate().map(|(index, field)| {
+        let value_name = &value_names[index];
+        let parser = generate_type_parser(&field.ty, quote! { args[#index] });
+        quote! {
+            let #value_name = match #parser {
+                Ok(value) => value,
+                Err(error) => return Err(::syn::Error::new(
+                    args[#index].span(),
+                    format!("Failed to parse argument {}: {}", #index + 1, error)
+                )),
+            };
+        }
+    });
 
     quote! {
         {
             use ::syn::spanned::Spanned;
-            if call_expr.args.len() != #field_count {
+            #collect_args
+            if args.len() != #field_count {
                 return Err(::syn::Error::new(
-                    call_expr.span(),
+                    args_span,
                     format!("Variant '{}' expects {} argument(s), but {} were provided",
-                        stringify!(#variant_name), #field_count, call_expr.args.len())
+                        stringify!(#variant_name), #field_count, args.len())
                 ));
             }
 
             #(#assignments)*
 
-            Ok(Self::#variant_name(#(#constructor_args),*))
+            Ok(Self::#variant_name(#(#value_names),*))
         }
     }
 }

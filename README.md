@@ -24,7 +24,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-try_from_expr = "0.1.0"
+try_from_expr = "0.2"
 ```
 
 ## Quick Start
@@ -155,6 +155,261 @@ let expr = syn::parse_str("OptionalConfig::Value(None)").unwrap();
 let expr = syn::parse_str(r#"OptionalConfig::Value("text")"#).unwrap();
 ```
 
+## Meta Syntax
+
+Every variant also parses from a snake_case form that reads like an attribute
+argument, the way `#[serde(rename = "..")]` does. A value inside a meta form
+can itself be in path form, as in `regex_literal = Format::Email`. The examples
+below use these enums:
+
+```rust
+#[derive(TryFromExpr)]
+enum Format {
+    Email,
+    Custom(String),
+}
+
+#[derive(TryFromExpr)]
+enum StringValidator {
+    Trim,
+    MaxLength(Option<usize>),
+    OneOf(Vec<String>),
+    RegexLiteral(Format),
+    Length { min: usize, max: Option<usize> },
+}
+
+#[derive(TryFromExpr)]
+enum NumberValidator {
+    Positive,
+    Between(i64, i64),
+    Labels(HashMap<String, i64>),
+}
+
+#[derive(TryFromExpr)]
+enum Validator {
+    String(StringValidator),
+    Number(NumberValidator),
+}
+```
+
+### Unit variants
+
+A unit variant is its snake_case name. The bare PascalCase name works too.
+
+| Meta form | Parses to                |
+| --------- | ------------------------ |
+| `trim`    | `StringValidator::Trim`  |
+| `Trim`    | `StringValidator::Trim`  |
+
+### Tuple variants
+
+A single-field variant takes `name = value`. An `Option` field accepts `None`,
+`Some(..)` or a bare value, and a field holding another enum takes that enum in
+either form.
+
+| Meta form                            | Parses to                                       |
+| ------------------------------------ | ----------------------------------------------- |
+| `max_length = 64`                    | `MaxLength(Some(64))`                           |
+| `max_length = Some(64)`              | `MaxLength(Some(64))`                           |
+| `max_length = None`                  | `MaxLength(None)`                               |
+| `one_of = ["draft", "published"]`    | `OneOf(vec!["draft".into(), "published".into()])` |
+| `one_of = vec!["draft"]`             | `OneOf(vec!["draft".into()])`                   |
+| `regex_literal = format(email)`      | `RegexLiteral(Format::Email)`                   |
+| `regex_literal = Format::Email`      | `RegexLiteral(Format::Email)`                   |
+| `regex_literal = format(custom = "^a")` | `RegexLiteral(Format::Custom("^a".into()))`  |
+
+A variant with several fields takes them as a tuple, and a map takes an array
+of key and value pairs.
+
+| Meta form                              | Parses to                                  |
+| -------------------------------------- | ------------------------------------------ |
+| `between = (1, 10)`                    | `NumberValidator::Between(1, 10)`          |
+| `between = (-5, 5)`                    | `NumberValidator::Between(-5, 5)`          |
+| `labels = [("low", 0), ("high", 100)]` | `NumberValidator::Labels({"low": 0, "high": 100})` |
+
+### Struct variants
+
+A struct variant is called with `field = value` arguments, in any order. A
+field of type `Option` can be left out.
+
+| Meta form                       | Parses to                              |
+| ------------------------------- | -------------------------------------- |
+| `length(min = 1, max = 64)`     | `Length { min: 1, max: Some(64) }`     |
+| `length(max = 64, min = 1)`     | `Length { min: 1, max: Some(64) }`     |
+| `length(min = 1)`               | `Length { min: 1, max: None }`         |
+
+### Naming the enum
+
+Any meta form can be wrapped in its enum's snake_case name. On the enum itself
+this changes nothing, but in a wrapper it picks the child explicitly.
+
+| Meta form                                | Parses to                                     |
+| ---------------------------------------- | --------------------------------------------- |
+| `string_validator(trim)`                 | `StringValidator::Trim`                       |
+| `string_validator(length(min = 1))`      | `StringValidator::Length { min: 1, max: None }` |
+| `number_validator(between = (1, 10))`    | `NumberValidator::Between(1, 10)`             |
+
+### Wrapper enums
+
+A wrapper accepts its children's forms. A bare name goes to the child that
+accepts it (see [Children Sharing a Name](#children-sharing-a-name)), a named
+child goes to that child, and the wrapper's own variants take `name = value`
+like any tuple variant.
+
+| Meta form given to `Validator`       | Parses to                                          |
+| ------------------------------------ | -------------------------------------------------- |
+| `trim`                               | `Validator::String(StringValidator::Trim)`         |
+| `between = (1, 10)`                  | `Validator::Number(NumberValidator::Between(1, 10))` |
+| `string_validator(max_length = 64)`  | `Validator::String(StringValidator::MaxLength(Some(64)))` |
+| `number = positive`                  | `Validator::Number(NumberValidator::Positive)`     |
+| `validator(string = trim)`           | `Validator::String(StringValidator::Trim)`         |
+| `StringValidator::Trim`              | `Validator::String(StringValidator::Trim)`         |
+
+### Keywords
+
+A name that is a Rust keyword takes the raw identifier prefix, so a variant
+`Type(String)` is written `r#type = "text"` and a variant `Ref { r#type: u8 }`
+is written `r#ref(r#type = 3)`.
+
+### Parsing an attribute
+
+The meta forms are ordinary Rust expressions, so an attribute's arguments parse
+as a comma-separated list of `syn::Expr`:
+
+```rust
+use syn::{Attribute, Expr, Token, punctuated::Punctuated};
+
+let attr: Attribute = syn::parse_quote!(#[validators(
+    trim,
+    length(min = 1, max = 64),
+    string_validator(regex_literal = format(custom = r"^/(?:[^/\\].*)?$")),
+)]);
+
+let validators = attr
+    .parse_args_with(Punctuated::<Expr, Token![,]>::parse_terminated)?
+    .iter()
+    .map(Validator::try_from)
+    .collect::<syn::Result<Vec<_>>>()?;
+```
+
+The equivalent path forms parse to the same values:
+
+```rust
+#[validators(
+    StringValidator::Trim,
+    StringValidator::Length { min: 1, max: Some(64) },
+    StringValidator::RegexLiteral(Format::Custom(r"^/(?:[^/\\].*)?$")),
+)]
+```
+
+### Mistakes
+
+A form that names nothing reports the names that would have worked:
+
+```text
+length(min = 1, mx = 64)
+    Unknown field 'mx' for variant 'Length'. Valid fields: min, max
+
+string_validator(trimm)
+    Unknown unit variant 'trimm' for enum 'StringValidator'.
+    Valid options: Trim; in meta form: trim
+
+between = 1
+    Variant 'Between' expects a tuple of 2 values
+```
+
+### A struct variant named after its enum
+
+When a struct variant shares its enum's snake_case name, `name(..)` is that
+variant when every argument is one of its fields, and the enum wrapper
+otherwise:
+
+```rust
+#[derive(TryFromExpr)]
+enum Config {
+    Config { host: String, port: Option<u16> },
+    Verbose,
+    Level(u8),
+}
+```
+
+| Meta form                                  | Parses to                                          |
+| ------------------------------------------ | -------------------------------------------------- |
+| `config(host = "localhost")`               | `Config::Config { host: "localhost", port: None }` |
+| `config(host = "localhost", port = 8080)`  | `Config::Config { host: "localhost", port: Some(8080) }` |
+| `config(config(host = "localhost"))`       | `Config::Config { host: "localhost", port: None }` |
+| `config(verbose)`                          | `Config::Verbose`                                  |
+| `config(level = 3)`                        | `Config::Level(3)`                                 |
+
+A misspelled field is not one of the variant's fields, so the call is read as
+the enum wrapper and reports the variants that would have fit:
+
+```text
+config(hots = "localhost")
+    Unknown tuple variant 'hots' for enum 'Config'. Valid options: level
+```
+
+A field of that variant may not share a meta name with a tuple variant, since
+`config(level = ..)` would then fit both readings. The derive rejects it:
+
+```rust
+#[derive(TryFromExpr)]
+enum Config {
+    Config { level: u8 },
+    Level(u8),
+}
+```
+
+```text
+error: Field `level` shares its meta name with a tuple variant, so `config(level = ..)` is ambiguous
+ --> src/lib.rs:5:14
+  |
+5 |     Config { level: u8 },
+  |              ^^^^^
+```
+
+Clippy's default `enum_variant_names` lint warns about a variant named after
+its enum, so a project using this pattern needs to allow that lint.
+
+## Children Sharing a Name
+
+Every derived enum publishes the names it accepts bare, through the
+`try_from_expr::meta_names::MetaNames` trait. A wrapper uses them to send a bare
+name such as `trim` straight to the one child that accepts it. Names only clash
+within a shape: `required`, `required = ..` and `required(..)` are distinct.
+
+When two children accept the same bare name, using it bare is an error that
+asks for the qualified form:
+
+```text
+Ambiguous meta name `required` for enum 'Rule': accepted by TextRule, NumberRule.
+Qualify it with `text_rule(..)` or `number_rule(..)`
+```
+
+To rule out overlaps altogether, mark the wrapper `all_unique`. Any shared name,
+including one inside a nested wrapper, then fails to compile:
+
+```rust
+#[derive(TryFromExpr)]
+#[try_from_expr(all_unique)]
+enum Rule {
+    Text(TextRule),
+    Number(NumberRule),
+}
+```
+
+A hand-written child type implements `MetaNames` itself, listing the bare names
+its `TryFrom<&syn::Expr>` accepts:
+
+```rust
+impl MetaNames for Flag {
+    const META_NAMES: MetaNameSet = MetaNameSet {
+        path_names: &["flag"],
+        ..MetaNameSet::empty("Flag")
+    };
+}
+```
+
 ## Force Mode Selection
 
 By default, the macro automatically detects whether your enum is a wrapper or
@@ -182,7 +437,7 @@ The macro analyzes your enum at compile time and generates a
 `TryFrom<&syn::Expr>` implementation that:
 
 1. **Unwraps** any parentheses or group expressions
-2. **Matches** the expression type (path, call, struct, literal)
+2. **Matches** the expression type (path, call, struct, or a meta form)
 3. **Parses** the variant name and validates it belongs to your enum
 4. **Extracts** and parses any parameters or fields
 5. **Constructs** the appropriate enum variant
@@ -195,7 +450,8 @@ The macro has built-in support for:
 -   **Primitives**: `bool`, `char`, `String`, all integer types, `f32`, `f64`
 -   **Collections**: `Vec<T>`, `HashMap<K, V>`, `BTreeMap<K, V>`, `Option<T>`
 -   **Special**: `OrderedFloat<T>` from the `ordered-float` crate
--   **Custom Types**: Any type that implements `TryFrom<&syn::Expr>`
+-   **Custom Types**: Any type that implements `TryFrom<&syn::Expr>`, plus
+    `MetaNames` when a wrapper enum holds it
 
 ## Error Handling
 
@@ -203,16 +459,19 @@ The macro provides detailed error messages:
 
 ```rust
 // Unknown variant
-"Unknown variant 'Invalid' for enum 'Setting'. Valid unit variants: Default"
+"Unknown unit variant 'Invalid' for enum 'Setting'"
 
 // Wrong number of arguments
-"Variant 'Coordinate' expects exactly 2 arguments, but 3 were provided"
+"Variant 'Coordinate' expects 2 argument(s), but 3 were provided"
 
 // Type parsing failure
-"Failed to parse argument 1: expected u32, got string literal"
+"Failed to parse argument 1: Expected an integer literal"
 
 // Missing required field
 "Missing required field 'name' for variant 'Config'"
+
+// Unknown meta variant
+"Unknown unit variant 'trimm' for enum 'StringValidator'. Valid options: Trim; in meta form: trim"
 ```
 
 ## Project Structure

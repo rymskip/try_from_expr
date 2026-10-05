@@ -1,0 +1,5 @@
+error: the enum mode is already set
+ --> tests/ui/duplicate_mode.rs:4:23
+  |
+4 | #[try_from_expr(leaf, wrapper)]
+  |                       ^^^^^^^

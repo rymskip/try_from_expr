@@ -1,0 +1,5 @@
+error: Field `level` shares its meta name with a tuple variant, so `config(level = ..)` is ambiguous
+ --> tests/ui/ambiguous_struct_field.rs:5:14
+  |
+5 |     Config { level: u8 },
+  |              ^^^^^

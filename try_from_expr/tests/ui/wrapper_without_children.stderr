@@ -1,0 +1,5 @@
+error: A wrapper enum needs at least one single-field tuple variant to hold a child type
+ --> tests/ui/wrapper_without_children.rs:5:6
+  |
+5 | enum Childless {
+  |      ^^^^^^^^^
